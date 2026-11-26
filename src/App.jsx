@@ -1,11 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
 import {
-  KEY_ID, buildColumns, buildWorkbook, distinctValues, downloadWorkbook, filteredRows, loadSheet, mergeSources, readFile,
-  sampleSources,
+  DEFAULT_KEY_OPTIONS, KEY_ID, autoKeys, buildColumns, buildWorkbook, detectSuffixes, distinctValues, downloadWorkbook,
+  filteredRows, loadSheet, mergeSources, readFile, sampleSources,
 } from './merge.js';
 
 const QTY_RX = /كمي|عدد|qty|quantity|مسحوب/i;
-const PRICE_RX = /سعر|price|cost|تكلف/i;
+const PRICE_RX = /سعر|price|cost|تكلف|كلف/i;
 const PREVIEW_LIMIT = 200;
 
 function initialState() {
@@ -15,13 +15,23 @@ function initialState() {
   const columns = buildColumns(sources)
     .map((c) => ({ ...c, on: order.includes(c.id) }))
     .sort((a, b) => rank(a.id) - rank(b.id));
-  return { sources, columns };
+  return { sources, columns, keyOptions: { ...DEFAULT_KEY_OPTIONS }, suffixAuto: true };
+}
+
+/** Re-derives everything that depends on the file list: key columns, detected suffixes, output columns. */
+function withSources(st, list) {
+  let keyOptions = st.keyOptions;
+  let sources = autoKeys(list, keyOptions);
+  if (st.suffixAuto) {
+    keyOptions = { ...keyOptions, suffixes: detectSuffixes(sources, keyOptions) };
+    sources = autoKeys(sources, keyOptions);
+  }
+  return { ...st, sources, keyOptions, columns: buildColumns(sources, st.columns) };
 }
 
 export default function App() {
-  const [{ sources, columns }, setState] = useState(initialState);
+  const [{ sources, columns, keyOptions, suffixAuto }, setState] = useState(initialState);
   const [mode, setMode] = useState('all');
-  const [sumDuplicates, setSumDuplicates] = useState(false);
   const [withTotal, setWithTotal] = useState(false);
   const [qtyId, setQtyId] = useState('');
   const [priceId, setPriceId] = useState('');
@@ -31,8 +41,12 @@ export default function App() {
   const setSources = (next) =>
     setState((st) => {
       const list = typeof next === 'function' ? next(st.sources) : next;
-      return { sources: list, columns: buildColumns(list, st.columns) };
+      return withSources(st, list);
     });
+  const setKeyOptions = (patch, manual = true) =>
+    setState((st) => withSources({ ...st, keyOptions: { ...st.keyOptions, ...patch }, suffixAuto: manual ? false : st.suffixAuto }, st.sources));
+  const redetectSuffixes = () => setState((st) => withSources({ ...st, suffixAuto: true }, st.sources));
+  const [suffixText, setSuffixText] = useState(null);
   const setColumns = (fn) => setState((st) => ({ ...st, columns: fn(st.columns) }));
 
   const valueCols = columns.filter((c) => c.id !== KEY_ID);
@@ -44,9 +58,9 @@ export default function App() {
   const result = useMemo(
     () =>
       sources.length
-        ? mergeSources(sources, columns, { mode, sumDuplicates, total: withTotal ? { qtyId: qty, priceId: price } : null })
+        ? mergeSources(sources, columns, { mode, keyOptions, total: withTotal ? { qtyId: qty, priceId: price } : null })
         : null,
-    [sources, columns, mode, sumDuplicates, withTotal, qty, price],
+    [sources, columns, mode, keyOptions, withTotal, qty, price],
   );
 
   async function addFiles(fileList) {
@@ -96,7 +110,7 @@ export default function App() {
         <DropZone onFiles={addFiles} />
         <div className="row" style={{ marginTop: 10 }}>
           <button onClick={() => { setState(initialState()); setErrors([]); }}>جرّب بمثال جاهز</button>
-          <button onClick={() => { setState({ sources: [], columns: [] }); setErrors([]); }}>مسح الكل</button>
+          <button onClick={() => { setState((st) => ({ ...st, sources: [], columns: [], suffixAuto: true, keyOptions: { ...DEFAULT_KEY_OPTIONS } })); setErrors([]); }}>مسح الكل</button>
         </div>
         <div className="files">
           {sources.map((s, i) => (
@@ -104,6 +118,8 @@ export default function App() {
               key={s.id}
               src={s}
               isFirst={i === 0}
+              stat={result?.perFile[i]}
+              multi={sources.length > 1}
               onChange={(patch) => updateSource(s.id, patch)}
               onRemove={() => setSources((list) => list.filter((x) => x.id !== s.id))}
               onMakeFirst={() => setSources((list) => [s, ...list.filter((x) => x.id !== s.id)])}
@@ -121,7 +137,7 @@ export default function App() {
               فعّل الأعمدة التي تريدها، غيّر اسمها إن أردت، ورتّبها بالأسهم. الأعمدة التي تحمل نفس الاسم في أكثر من ملف
               تُدمج في عمود واحد.
             </p>
-            <ColumnList columns={columns} setColumns={setColumns} />
+            <ColumnList columns={columns} setColumns={setColumns} sources={sources} />
           </div>
           <div>
             <h2>خيارات الدمج</h2>
@@ -139,15 +155,38 @@ export default function App() {
               ))}
             </fieldset>
             <fieldset>
-              <legend>القطع المكررة داخل نفس الملف</legend>
+              <legend>مطابقة رقم القطعة</legend>
               <label className="chk">
-                <input type="checkbox" checked={sumDuplicates} onChange={(e) => setSumDuplicates(e.target.checked)} />
+                <input type="checkbox" checked={keyOptions.ignoreSymbols} onChange={(e) => setKeyOptions({ ignoreSymbols: e.target.checked })} />
                 <span>
-                  اجمع القيم الرقمية (مثلاً عدة سحوبات لنفس القطعة)
+                  تجاهل الرموز والمسافات
                   <br />
-                  <span className="mut small">إذا لم يُفعّل، تؤخذ أول قيمة فقط.</span>
+                  <span className="mut small">مثلاً 42200-31A-H01 = 4220031AH01</span>
                 </span>
               </label>
+              <label className="f">
+                تجاهل النهايات
+                <input
+                  type="text"
+                  dir="ltr"
+                  placeholder="مثال: GST, GM"
+                  value={suffixText ?? keyOptions.suffixes.join(', ')}
+                  onChange={(e) => setSuffixText(e.target.value)}
+                  onBlur={() => {
+                    if (suffixText === null) return;
+                    setKeyOptions({ suffixes: suffixText.split(/[,،\s]+/).map((x) => x.trim()).filter(Boolean) });
+                    setSuffixText(null);
+                  }}
+                />
+              </label>
+              <p className="mut small">
+                {suffixAuto
+                  ? keyOptions.suffixes.length
+                    ? `اكتُشفت تلقائياً: ${keyOptions.suffixes.join('، ')} (مثلاً 96536712GST = 96536712)`
+                    : 'لم تُكتشف نهايات مختلفة بين الملفات.'
+                  : 'تم ضبطها يدوياً. '}
+                {!suffixAuto && <button className="link" onClick={redetectSuffixes}>اكتشاف تلقائي</button>}
+              </p>
             </fieldset>
             <fieldset>
               <legend>عمود الإجمالي</legend>
@@ -235,7 +274,7 @@ function DropZone({ onFiles }) {
   );
 }
 
-function SourceCard({ src, isFirst, onChange, onRemove, onMakeFirst }) {
+function SourceCard({ src, isFirst, stat, multi, onChange, onRemove, onMakeFirst }) {
   const kept = src.filters.length ? filteredRows(src).length : null;
   return (
     <div className="card">
@@ -273,6 +312,20 @@ function SourceCard({ src, isFirst, onChange, onRemove, onMakeFirst }) {
         </select>
       </label>
       <Filters src={src} onChange={(filters) => onChange({ filters })} />
+      <label className="chk small">
+        <input type="checkbox" checked={src.sumDuplicates} onChange={(e) => onChange({ sumDuplicates: e.target.checked })} />
+        <span>اجمع الأرقام للقطع المكررة في هذا الملف (مثلاً عدة سحوبات لنفس القطعة)</span>
+      </label>
+      {stat && multi && (
+        <p className="small match">
+          مطابق مع الملفات الأخرى: <b>{stat.matched.toLocaleString('ar')}</b> من {stat.keys.toLocaleString('ar')} قطعة
+        </p>
+      )}
+      {stat && stat.conflicts > 0 && (
+        <p className="small warn">
+          {stat.conflicts.toLocaleString('ar')} قطعة مكررة في هذا الملف بقيم مختلفة (مثل السعر)، أُخذت أول قيمة لكل واحدة.
+        </p>
+      )}
       {!isFirst && <button className="x" onClick={onMakeFirst}>اجعله الملف الأول</button>}
     </div>
   );
@@ -280,6 +333,8 @@ function SourceCard({ src, isFirst, onChange, onRemove, onMakeFirst }) {
 
 const OPS = [
   ['in', 'القيمة واحدة من'],
+  ['notEmpty', 'فيه قيمة (غير فارغ)'],
+  ['empty', 'فارغ'],
   ['notIn', 'استبعد القيم'],
   ['contains', 'يحتوي على'],
   ['notContains', 'لا يحتوي على'],
@@ -314,7 +369,7 @@ function Filters({ src, onChange }) {
               {OPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </label>
-          {LIST_OPS.has(f.op) ? (
+          {f.op === 'notEmpty' || f.op === 'empty' ? null : LIST_OPS.has(f.op) ? (
             <ValuePicker src={src} filter={f} onChange={(values) => set(i, { values })} />
           ) : (
             <label className="f">
@@ -366,7 +421,8 @@ function ValuePicker({ src, filter, onChange }) {
   );
 }
 
-function ColumnList({ columns, setColumns }) {
+function ColumnList({ columns, setColumns, sources }) {
+  const names = new Map(sources.map((s) => [s.id, s.name]));
   if (!columns.length) return <ul className="cols"><li className="empty">ارفع الملفات لتظهر الأعمدة هنا</li></ul>;
   const move = (i, d) =>
     setColumns((cols) => {
@@ -383,6 +439,12 @@ function ColumnList({ columns, setColumns }) {
           <span>
             <input type="text" value={c.label} aria-label="اسم العمود" onChange={(e) => patch(i, { label: e.target.value, edited: true })} />
             {c.id === KEY_ID && <span className="tag">عمود الربط</span>}
+            {c.files.length > 1 && (
+              <select className="src" value={c.source} aria-label="مصدر العمود" onChange={(e) => patch(i, { source: e.target.value ? +e.target.value : '' })}>
+                <option value="">من أول ملف فيه قيمة</option>
+                {c.files.map((id) => <option key={id} value={id}>من: {names.get(id)}</option>)}
+              </select>
+            )}
           </span>
           <button className="mv" disabled={i === 0} aria-label="لأعلى" onClick={() => move(i, -1)}>↑</button>
           <button className="mv" disabled={i === columns.length - 1} aria-label="لأسفل" onClick={() => move(i, 1)}>↓</button>

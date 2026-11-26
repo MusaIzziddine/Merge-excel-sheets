@@ -67,3 +67,9 @@ td.e::after{content:"—";color:var(--bad)}
 .val:hover{background:var(--soft)}
 .val input{width:20px;height:20px;accent-color:var(--acc)}
 .val span{overflow-wrap:anywhere}
+.match{margin:8px 0 4px;color:var(--mut)}.match b{color:var(--acc)}
+.warn{margin:4px 0;padding:6px 10px;border-radius:8px;background:var(--warn)}
+.cols select.src{margin-top:6px;min-height:36px;font-size:14px}
+button.link{border:0;background:none;color:var(--acc);text-decoration:underline;padding:0;min-height:0;font-size:14px}
+.card .nm .x{flex:none;white-space:nowrap}
+td,th,.val bdi{unicode-bidi:plaintext}
