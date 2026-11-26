@@ -1,0 +1,58 @@
+/* VOICE: calm working tool, clear steps, no decoration
+   IDEA: a ledger — files flow in from the right, one merged sheet comes out
+   PICTURE: the working tool itself: file cards, column picker, live preview table
+   COLOUR and TYPE: white ground, ink #14110f, ultramarine #1d2bd8, cool grey; IBM Plex Sans Arabic
+   LAYOUT: three numbered-by-heading bands stacked; two columns for options above 900px */
+:root{color-scheme:light dark;--bg:light-dark(#ffffff,#0d0e18);--ink:light-dark(#14110f,#ecebf3);--mut:light-dark(#5d6170,#9ea2b4);--line:light-dark(#e2e4ea,#262838);--soft:light-dark(#f4f5f8,#161827);--acc:light-dark(#1d2bd8,#8d95ff);--accInk:light-dark(#fff,#0d0e18);--warn:light-dark(#fff4dc,#3a2e10);--bad:light-dark(#b42318,#ff8a7a)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "IBM Plex Sans Arabic",system-ui,sans-serif;overflow-x:clip}
+.band{padding:clamp(20px,3.5vw,44px) max(5vw,16px);max-width:1240px;margin:0 auto}
+h1{font-size:clamp(28px,5vw,44px);line-height:1.1;margin:0 0 8px;text-wrap:balance}
+h2{font-size:21px;margin:0 0 14px}
+p{margin:0 0 10px}.mut{color:var(--mut)}.small{font-size:14px}
+header.band{padding-bottom:8px}
+.drop{border:2px dashed var(--acc);border-radius:14px;padding:26px 16px;text-align:center;background:var(--soft);cursor:pointer}
+.drop.on{background:color-mix(in srgb,var(--acc) 12%,var(--bg))}
+.drop strong{display:block;font-size:19px;color:var(--acc)}
+button,.btn{font:inherit;font-size:16px;min-height:44px;padding:8px 16px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+button.pri{background:var(--acc);color:var(--accInk);border-color:var(--acc);font-weight:700}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.files{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:12px;margin-top:14px}
+.card{border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--bg)}
+.card .nm{font-weight:700;overflow-wrap:anywhere;margin-bottom:8px;display:flex;justify-content:space-between;gap:8px;align-items:start}
+.card .nm small{font-weight:400;color:var(--mut)}
+.x{min-height:36px;padding:2px 10px;font-size:14px}
+label.f{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:8px;align-items:center;margin:6px 0;font-size:14px;color:var(--mut)}
+select,input[type=text],input[type=number]{font:inherit;font-size:16px;min-height:40px;padding:4px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+.opts{display:grid;gap:24px;grid-template-columns:minmax(0,1fr)}
+@media(min-width:900px){.opts{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}}
+.cols{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.cols li{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid var(--line)}
+.cols li:first-child{border-top:0}
+.cols li.off input[type=text]{opacity:.5}
+.cols input[type=checkbox]{width:22px;height:22px;accent-color:var(--acc)}
+.cols .mv{min-height:40px;width:40px;padding:0}
+.tag{font-size:12px;color:var(--acc);font-weight:700;white-space:nowrap}
+.chk{display:flex;gap:10px;align-items:flex-start;margin:10px 0}
+.chk input{width:22px;height:22px;margin-top:3px;accent-color:var(--acc);flex:none}
+fieldset{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:0 0 14px}
+legend{font-weight:700;padding:0 6px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.stat{background:var(--soft);border-radius:12px;padding:10px 14px}
+.stat b{display:block;font-size:clamp(24px,4vw,32px);line-height:1.2}
+.stat span{font-size:14px;color:var(--mut)}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;max-height:520px;overflow-y:auto}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{padding:8px 12px;border-bottom:1px solid var(--line);text-align:start;white-space:nowrap}
+th{position:sticky;top:0;background:var(--soft);font-weight:700}
+td.n{text-align:left;font-variant-numeric:tabular-nums}
+tr.miss td{background:var(--warn)}
+td.e::after{content:"—";color:var(--bad)}
+.msg{padding:10px 14px;border-radius:10px;background:var(--soft);margin-top:10px}
+.msg.bad{color:var(--bad)}
+.empty{padding:30px;text-align:center;color:var(--mut)}
+@media(max-width:600px){table{font-size:13px}.cols li{grid-template-columns:auto minmax(0,1fr) auto auto}}
+@media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(6px)}}}

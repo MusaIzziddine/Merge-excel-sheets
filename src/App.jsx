@@ -1,0 +1,322 @@
+import { useMemo, useRef, useState } from 'react';
+import {
+  KEY_ID, buildColumns, buildWorkbook, downloadWorkbook, loadSheet, mergeSources, readFile, sampleSources,
+} from './merge.js';
+
+const QTY_RX = /كمي|عدد|qty|quantity|مسحوب/i;
+const PRICE_RX = /سعر|price|cost|تكلف/i;
+const PREVIEW_LIMIT = 200;
+
+function initialState() {
+  const sources = sampleSources();
+  const order = [KEY_ID, 'اسم القطعة', 'الكمية المسحوبة', 'سعر القطعة'];
+  const columns = buildColumns(sources).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  return { sources, columns };
+}
+
+export default function App() {
+  const [{ sources, columns }, setState] = useState(initialState);
+  const [mode, setMode] = useState('all');
+  const [sumDuplicates, setSumDuplicates] = useState(false);
+  const [withTotal, setWithTotal] = useState(false);
+  const [qtyId, setQtyId] = useState('');
+  const [priceId, setPriceId] = useState('');
+  const [fileName, setFileName] = useState('الملف-المدمج');
+  const [errors, setErrors] = useState([]);
+
+  const setSources = (next) =>
+    setState((st) => {
+      const list = typeof next === 'function' ? next(st.sources) : next;
+      return { sources: list, columns: buildColumns(list, st.columns) };
+    });
+  const setColumns = (fn) => setState((st) => ({ ...st, columns: fn(st.columns) }));
+
+  const valueCols = columns.filter((c) => c.id !== KEY_ID);
+  const pick = (current, rx) =>
+    valueCols.some((c) => c.id === current) ? current : valueCols.find((c) => rx.test(c.label))?.id ?? valueCols[0]?.id ?? '';
+  const qty = pick(qtyId, QTY_RX);
+  const price = pick(priceId, PRICE_RX);
+
+  const result = useMemo(
+    () =>
+      sources.length
+        ? mergeSources(sources, columns, { mode, sumDuplicates, total: withTotal ? { qtyId: qty, priceId: price } : null })
+        : null,
+    [sources, columns, mode, sumDuplicates, withTotal, qty, price],
+  );
+
+  async function addFiles(fileList) {
+    const errs = [];
+    const added = [];
+    for (const f of fileList) {
+      try {
+        added.push(readFile(f.name, await f.arrayBuffer()));
+      } catch {
+        errs.push(`تعذّرت قراءة الملف: ${f.name}`);
+      }
+    }
+    setErrors(errs);
+    if (added.length) setSources((list) => [...list, ...added]);
+  }
+
+  function updateSource(id, patch) {
+    setSources((list) =>
+      list.map((s) => {
+        if (s.id !== id) return s;
+        const next = { ...s, ...patch };
+        return 'key' in patch && Object.keys(patch).length <= 2 ? next : loadSheet(next);
+      }),
+    );
+  }
+
+  function download() {
+    const safe = (fileName.trim() || 'الملف-المدمج').replace(/[\\/:*?"<>|]/g, '-');
+    downloadWorkbook(buildWorkbook(result), `${safe}.xlsx`);
+  }
+
+  const missing = result ? result.rows.filter((r) => r.missing).length : 0;
+
+  return (
+    <>
+      <header className="band">
+        <h1>دمج ملفات الإكسل حسب رقم القطعة</h1>
+        <p className="mut">
+          ارفع ملفين أو أكثر، اختر عمود الربط في كل ملف، رتّب الأعمدة كما تريد، ثم نزّل ملفاً واحداً جاهزاً. كل المعالجة
+          تتم داخل المتصفح، ولا تُرفع ملفاتك لأي مكان.
+        </p>
+      </header>
+
+      <section className="band">
+        <h2>الملفات</h2>
+        <DropZone onFiles={addFiles} />
+        <div className="row" style={{ marginTop: 10 }}>
+          <button onClick={() => setSources(sampleSources())}>جرّب بمثال جاهز</button>
+          <button onClick={() => { setState({ sources: [], columns: [] }); setErrors([]); }}>مسح الكل</button>
+        </div>
+        <div className="files">
+          {sources.map((s, i) => (
+            <SourceCard
+              key={s.id}
+              src={s}
+              isFirst={i === 0}
+              onChange={(patch) => updateSource(s.id, patch)}
+              onRemove={() => setSources((list) => list.filter((x) => x.id !== s.id))}
+              onMakeFirst={() => setSources((list) => [s, ...list.filter((x) => x.id !== s.id)])}
+            />
+          ))}
+        </div>
+        {errors.map((e) => <div key={e} className="msg bad">{e}</div>)}
+      </section>
+
+      <section className="band">
+        <div className="opts">
+          <div>
+            <h2>أعمدة الملف الناتج</h2>
+            <p className="mut small">
+              فعّل الأعمدة التي تريدها، غيّر اسمها إن أردت، ورتّبها بالأسهم. الأعمدة التي تحمل نفس الاسم في أكثر من ملف
+              تُدمج في عمود واحد.
+            </p>
+            <ColumnList columns={columns} setColumns={setColumns} />
+          </div>
+          <div>
+            <h2>خيارات الدمج</h2>
+            <fieldset>
+              <legend>أي القطع تظهر؟</legend>
+              {[
+                ['all', 'كل القطع الموجودة في أي ملف'],
+                ['base', 'فقط القطع الموجودة في الملف الأول'],
+                ['both', 'فقط القطع الموجودة في كل الملفات'],
+              ].map(([v, label]) => (
+                <label className="chk" key={v}>
+                  <input type="radio" name="mode" checked={mode === v} onChange={() => setMode(v)} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </fieldset>
+            <fieldset>
+              <legend>القطع المكررة داخل نفس الملف</legend>
+              <label className="chk">
+                <input type="checkbox" checked={sumDuplicates} onChange={(e) => setSumDuplicates(e.target.checked)} />
+                <span>
+                  اجمع القيم الرقمية (مثلاً عدة سحوبات لنفس القطعة)
+                  <br />
+                  <span className="mut small">إذا لم يُفعّل، تؤخذ أول قيمة فقط.</span>
+                </span>
+              </label>
+            </fieldset>
+            <fieldset>
+              <legend>عمود الإجمالي</legend>
+              <label className="chk">
+                <input type="checkbox" checked={withTotal} onChange={(e) => setWithTotal(e.target.checked)} />
+                <span>أضف عمود «الإجمالي» = الكمية × السعر (كمعادلة في الإكسل)</span>
+              </label>
+              <label className="f">
+                عمود الكمية
+                <select value={qty} onChange={(e) => setQtyId(e.target.value)}>
+                  {valueCols.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              </label>
+              <label className="f">
+                عمود السعر
+                <select value={price} onChange={(e) => setPriceId(e.target.value)}>
+                  {valueCols.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              </label>
+            </fieldset>
+          </div>
+        </div>
+      </section>
+
+      <section className="band">
+        <h2>النتيجة</h2>
+        {result && (
+          <div className="stats">
+            {[
+              [result.rows.length, 'قطعة في الملف الناتج'],
+              [result.rows.length - missing, 'مكتملة البيانات'],
+              [missing, 'ينقصها بيانات'],
+              [result.duplicates, 'صف مكرر داخل الملفات'],
+            ].map(([n, l]) => (
+              <div className="stat" key={l}><b>{n.toLocaleString('ar')}</b><span>{l}</span></div>
+            ))}
+          </div>
+        )}
+        <div className="row" style={{ marginBottom: 12 }}>
+          <label className="f" style={{ flex: '1 1 260px', margin: 0 }}>
+            اسم الملف
+            <input type="text" value={fileName} onChange={(e) => setFileName(e.target.value)} />
+          </label>
+          <button className="pri" disabled={!result?.rows.length || !result.headers.length} onClick={download}>
+            تنزيل ملف الإكسل
+          </button>
+        </div>
+        <Preview result={result} />
+        <p className="mut small" style={{ marginTop: 8 }}>
+          الصفوف المظللة ينقصها قيمة في أحد الأعمدة (غالباً القطعة غير موجودة في أحد الملفات).
+        </p>
+      </section>
+    </>
+  );
+}
+
+function DropZone({ onFiles }) {
+  const input = useRef(null);
+  const [over, setOver] = useState(false);
+  return (
+    <>
+      <div
+        className={`drop${over ? ' on' : ''}`}
+        tabIndex={0}
+        role="button"
+        aria-label="اختر ملفات إكسل"
+        onClick={() => input.current.click()}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.current.click(); } }}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); onFiles([...e.dataTransfer.files]); }}
+      >
+        <strong>اسحب ملفات الإكسل هنا أو اضغط للاختيار</strong>
+        <span className="mut small">‎.xlsx ‎.xls ‎.csv — يمكنك اختيار أكثر من ملف</span>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept=".xlsx,.xls,.xlsm,.csv"
+        multiple
+        hidden
+        onChange={(e) => { onFiles([...e.target.files]); e.target.value = ''; }}
+      />
+    </>
+  );
+}
+
+function SourceCard({ src, isFirst, onChange, onRemove, onMakeFirst }) {
+  return (
+    <div className="card">
+      <div className="nm">
+        <span>
+          <bdi>{src.name}</bdi> <small>{isFirst ? '(الملف الأول) · ' : ''}{src.data.length} صف</small>
+        </span>
+        <button className="x" onClick={onRemove}>حذف</button>
+      </div>
+      {src.wb.SheetNames.length > 1 && (
+        <label className="f">
+          الورقة
+          <select value={src.sheet} onChange={(e) => onChange({ sheet: e.target.value, hdrSet: false, keySet: false })}>
+            {src.wb.SheetNames.map((n) => <option key={n}>{n}</option>)}
+          </select>
+        </label>
+      )}
+      <label className="f">
+        صف العناوين
+        <input
+          type="number"
+          min="1"
+          value={src.hdr}
+          onChange={(e) => onChange({ hdr: Math.max(1, +e.target.value || 1), hdrSet: true, keySet: false })}
+        />
+      </label>
+      <label className="f">
+        عمود الربط
+        <select value={src.key} onChange={(e) => onChange({ key: +e.target.value, keySet: true })}>
+          {src.headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
+        </select>
+      </label>
+      {!isFirst && <button className="x" onClick={onMakeFirst}>اجعله الملف الأول</button>}
+    </div>
+  );
+}
+
+function ColumnList({ columns, setColumns }) {
+  if (!columns.length) return <ul className="cols"><li className="empty">ارفع الملفات لتظهر الأعمدة هنا</li></ul>;
+  const move = (i, d) =>
+    setColumns((cols) => {
+      const next = [...cols];
+      [next[i], next[i + d]] = [next[i + d], next[i]];
+      return next;
+    });
+  const patch = (i, p) => setColumns((cols) => cols.map((c, j) => (j === i ? { ...c, ...p } : c)));
+  return (
+    <ul className="cols">
+      {columns.map((c, i) => (
+        <li key={c.id} className={c.on ? '' : 'off'}>
+          <input type="checkbox" checked={c.on} aria-label="إظهار العمود" onChange={(e) => patch(i, { on: e.target.checked })} />
+          <span>
+            <input type="text" value={c.label} aria-label="اسم العمود" onChange={(e) => patch(i, { label: e.target.value, edited: true })} />
+            {c.id === KEY_ID && <span className="tag">عمود الربط</span>}
+          </span>
+          <button className="mv" disabled={i === 0} aria-label="لأعلى" onClick={() => move(i, -1)}>↑</button>
+          <button className="mv" disabled={i === columns.length - 1} aria-label="لأسفل" onClick={() => move(i, 1)}>↓</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Preview({ result }) {
+  if (!result) return <div className="scroll"><div className="empty">لا توجد نتيجة بعد</div></div>;
+  if (!result.rows.length) return <div className="scroll"><div className="empty">لا توجد قطع مطابقة لخيارات الدمج</div></div>;
+  return (
+    <div className="scroll">
+      <table>
+        <thead>
+          <tr>{result.headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {result.rows.slice(0, PREVIEW_LIMIT).map((r, i) => (
+            <tr key={i} className={r.missing ? 'miss' : ''}>
+              {r.values.map((v, j) =>
+                v === '' ? <td key={j} className="e" /> : (
+                  <td key={j} className={typeof v === 'number' ? 'n' : ''}>{typeof v === 'number' ? +v.toFixed(4) : String(v)}</td>
+                ),
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {result.rows.length > PREVIEW_LIMIT && (
+        <div className="empty">تُعرض أول {PREVIEW_LIMIT} صف من {result.rows.length}، والملف المنزّل يحتوي الكل.</div>
+      )}
+    </div>
+  );
+}
