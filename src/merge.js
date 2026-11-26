@@ -266,10 +266,12 @@ export function buildColumns(sources, prev = []) {
  * opts.mode: 'all' | 'base' (keys in first file) | 'both' (keys in every file)
  * opts.keyOptions: see normKey
  * opts.total: { qtyId, priceId } to append a quantity × price column
+ * opts.rowsFrom: a source id → keep every row of that file (no collapsing of repeated part numbers);
+ *   otherwise one row per part number.
  * Per source: src.filters, src.sumDuplicates (add numbers when a key repeats inside that file).
  */
 export function mergeSources(sources, columns, opts = {}) {
-  const { mode = 'all', total = null, keyOptions = DEFAULT_KEY_OPTIONS } = opts;
+  const { mode = 'all', total = null, keyOptions = DEFAULT_KEY_OPTIONS, rowsFrom = null } = opts;
   const map = new Map();
   const perFile = sources.map((s) => ({ id: s.id, name: s.name, rows: 0, keys: 0, duplicates: 0, conflicts: 0 }));
 
@@ -311,11 +313,36 @@ export function mergeSources(sources, columns, opts = {}) {
     }
   });
 
-  let records = [...map.values()];
-  if (mode === 'base') records = records.filter((r) => r.from.has(0));
-  if (mode === 'both') records = records.filter((r) => r.from.size === sources.length);
+  let records;
+  let order = sources.map((s) => s.id);
+  const baseIndex = rowsFrom == null ? -1 : sources.findIndex((s) => s.id === rowsFrom);
+  if (baseIndex >= 0) {
+    // One output row per (filtered) row of the base file, like VLOOKUP: its own values,
+    // plus the other files' values for the same part number.
+    const base = sources[baseIndex];
+    order = [base.id, ...order.filter((id) => id !== base.id)];
+    records = [];
+    for (const row of filteredRows(base)) {
+      const k = normKey(row[base.key], keyOptions);
+      if (!k) continue;
+      const rec = map.get(k);
+      const own = {};
+      base.headers.forEach((h, i) => {
+        if (i !== base.key && !blank(row[i])) own[normHeader(h)] = row[i];
+      });
+      records.push({
+        key: typeof row[base.key] === 'string' ? row[base.key].trim() : row[base.key],
+        values: { ...rec.values, [base.id]: own },
+        from: rec.from,
+      });
+    }
+    if (mode === 'both') records = records.filter((r) => r.from.size === sources.length);
+  } else {
+    records = [...map.values()];
+    if (mode === 'base') records = records.filter((r) => r.from.has(0));
+    if (mode === 'both') records = records.filter((r) => r.from.size === sources.length);
+  }
 
-  const order = sources.map((s) => s.id);
   const pick = (rec, c) => {
     if (c.id === KEY_ID) return rec.key;
     if (c.source) return rec.values[c.source]?.[c.id] ?? '';

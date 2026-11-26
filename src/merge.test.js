@@ -140,3 +140,15 @@ describe('real-world part numbers', () => {
   });
 });
 
+describe('row-per-row mode', () => {
+  it('keeps every filtered row of the base file and looks up the rest', () => {
+    const p = src('p', [['رقم القطعة', 'السعر'], ['A', 3], ['B', 5]]);
+    const q = { ...src('q', [['رقم القطعة', 'الكمية', 'الفرع'], ['A', 10, 'x'], ['A', 10, 'x'], ['B', 4, ''], ['Z', 1, 'x']]), filters: [{ col: 2, op: 'notEmpty' }] };
+    const cols = buildColumns([p, q]);
+    const all = mergeSources([p, q], cols, { rowsFrom: q.id, total: { qtyId: 'الكمية', priceId: 'السعر' } });
+    expect(all.rows.map((r) => r.values)).toEqual([['A', 3, 10, 'x', 30], ['A', 3, 10, 'x', 30], ['Z', '', 1, 'x', '']]);
+    const both = mergeSources([p, q], cols, { rowsFrom: q.id, mode: 'both' });
+    expect(both.rows).toHaveLength(2);
+  });
+});
+

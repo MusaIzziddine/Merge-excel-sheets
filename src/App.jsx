@@ -32,6 +32,8 @@ function withSources(st, list) {
 export default function App() {
   const [{ sources, columns, keyOptions, suffixAuto }, setState] = useState(initialState);
   const [mode, setMode] = useState('all');
+  const [rowsFromId, setRowsFromId] = useState('');
+  const rowsFrom = sources.some((s) => s.id === rowsFromId) ? rowsFromId : '';
   const [withTotal, setWithTotal] = useState(false);
   const [qtyId, setQtyId] = useState('');
   const [priceId, setPriceId] = useState('');
@@ -58,9 +60,9 @@ export default function App() {
   const result = useMemo(
     () =>
       sources.length
-        ? mergeSources(sources, columns, { mode, keyOptions, total: withTotal ? { qtyId: qty, priceId: price } : null })
+        ? mergeSources(sources, columns, { mode, keyOptions, rowsFrom: rowsFrom || null, total: withTotal ? { qtyId: qty, priceId: price } : null })
         : null,
-    [sources, columns, mode, keyOptions, withTotal, qty, price],
+    [sources, columns, mode, keyOptions, rowsFrom, withTotal, qty, price],
   );
 
   async function addFiles(fileList) {
@@ -142,14 +144,31 @@ export default function App() {
           <div>
             <h2>خيارات الدمج</h2>
             <fieldset>
+              <legend>شكل النتيجة</legend>
+              <label className="chk">
+                <input type="radio" name="shape" checked={!rowsFrom} onChange={() => setRowsFromId('')} />
+                <span>سطر واحد لكل رقم قطعة (القطع المكررة تُدمج)</span>
+              </label>
+              {sources.map((s) => (
+                <label className="chk" key={s.id}>
+                  <input type="radio" name="shape" checked={rowsFrom === s.id} onChange={() => setRowsFromId(s.id)} />
+                  <span>
+                    كل صف من <bdi>{s.name}</bdi> كما هو
+                    <br />
+                    <span className="mut small">بدون دمج المكرر، وتُجلب باقي الأعمدة من الملفات الأخرى (مثل VLOOKUP)</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            <fieldset>
               <legend>أي القطع تظهر؟</legend>
               {[
                 ['all', 'كل القطع الموجودة في أي ملف'],
-                ['base', 'فقط القطع الموجودة في الملف الأول'],
+                ...(rowsFrom ? [] : [['base', 'فقط القطع الموجودة في الملف الأول']]),
                 ['both', 'فقط القطع الموجودة في كل الملفات'],
               ].map(([v, label]) => (
                 <label className="chk" key={v}>
-                  <input type="radio" name="mode" checked={mode === v} onChange={() => setMode(v)} />
+                  <input type="radio" name="mode" checked={mode === v || (rowsFrom && mode === 'base' && v === 'all')} onChange={() => setMode(v)} />
                   <span>{label}</span>
                 </label>
               ))}
@@ -216,7 +235,7 @@ export default function App() {
         {result && (
           <div className="stats">
             {[
-              [result.rows.length, 'قطعة في الملف الناتج'],
+              [result.rows.length, 'صف في الملف الناتج'],
               [result.rows.length - missing, 'مكتملة البيانات'],
               [missing, 'ينقصها بيانات'],
               [result.duplicates, 'صف مكرر داخل الملفات'],
