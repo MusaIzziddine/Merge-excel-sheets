@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
-import { KEY_ID, buildColumns, buildWorkbook, makeSource, mergeSources, sampleSources } from './merge.js';
+import { KEY_ID, buildColumns, buildWorkbook, distinctValues, makeSource, mergeSources, sampleSources } from './merge.js';
 
 const src = (name, aoa) => {
   const wb = XLSX.utils.book_new();
@@ -14,7 +14,9 @@ describe('mergeSources', () => {
     expect(sources[0].key).toBe(0);
     expect(sources[1].key).toBe(1);
     const order = [KEY_ID, 'اسم القطعة', 'الكمية المسحوبة', 'سعر القطعة'];
-    const cols = buildColumns(sources).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    const cols = buildColumns(sources)
+      .filter((c) => order.includes(c.id))
+      .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
     const r = mergeSources(sources, cols);
     expect(r.headers).toEqual(['رقم القطعة', 'اسم القطعة', 'الكمية المسحوبة', 'سعر القطعة']);
     expect(r.rows.find((x) => x.values[0] === 'P-1001').values).toEqual(['P-1001', 'فلتر زيت', 12, 35]);
@@ -52,5 +54,42 @@ describe('mergeSources', () => {
     const a = src('a', [['تقرير المخزن'], ['رقم القطعة', 'الاسم'], ['Z', 'برغي']]);
     expect(a.hdr).toBe(2);
     expect(a.data).toEqual([['Z', 'برغي']]);
+  });
+});
+
+describe('filters', () => {
+  const qty = () => src('q', [
+    ['رقم القطعة', 'الكمية', 'المستودع', 'الحركة'],
+    ['A', 5, 'الرئيسي', 'سحب'],
+    ['A', 7, 'الفرعي', 'سحب'],
+    ['B', 2, 'الرئيسي', 'إرجاع'],
+    ['C', 9, 'الرئيسي', 'سحب مستعجل'],
+  ]);
+  const prices = () => src('p', [['رقم القطعة', 'السعر'], ['A', 1], ['B', 2], ['C', 3]]);
+  const run = (filters, opts = {}) => {
+    const p = prices();
+    const q = { ...qty(), filters };
+    return mergeSources([p, q], buildColumns([p, q]), { mode: 'both', ...opts }).rows.map((r) => r.values);
+  };
+
+  it('keeps only chosen values, before matching and summing', () => {
+    expect(run([{ col: 2, op: 'in', values: ['الفرعي'] }], { sumDuplicates: true })).toEqual([['A', 1, 7, 'الفرعي', 'سحب']]);
+    expect(run([{ col: 2, op: 'in', values: ['الرئيسي'] }], { sumDuplicates: true }).map((r) => r[2])).toEqual([5, 2, 9]);
+  });
+
+  it('supports exclude, contains, numeric and combined (AND) filters', () => {
+    expect(run([{ col: 3, op: 'notIn', values: ['إرجاع'] }]).map((r) => r[0])).toEqual(['A', 'C']);
+    expect(run([{ col: 3, op: 'contains', text: 'سحب' }]).map((r) => r[0])).toEqual(['A', 'C']);
+    expect(run([{ col: 3, op: 'notContains', text: 'سحب' }]).map((r) => r[0])).toEqual(['B']);
+    expect(run([{ col: 1, op: 'gte', text: '6' }]).map((r) => r[0])).toEqual(['A', 'C']);
+    expect(run([
+      { col: 2, op: 'in', values: ['الرئيسي'] },
+      { col: 3, op: 'contains', text: 'سحب' },
+    ]).map((r) => r[2])).toEqual([5, 9]);
+  });
+
+  it('ignores an empty filter and lists distinct values', () => {
+    expect(run([{ col: 2, op: 'in', values: [] }])).toHaveLength(3);
+    expect(distinctValues(qty(), 2)).toEqual([{ value: 'الرئيسي', count: 3 }, { value: 'الفرعي', count: 1 }]);
   });
 });

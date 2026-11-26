@@ -56,3 +56,14 @@ td.e::after{content:"—";color:var(--bad)}
 .empty{padding:30px;text-align:center;color:var(--mut)}
 @media(max-width:600px){table{font-size:13px}.cols li{grid-template-columns:auto minmax(0,1fr) auto auto}}
 @media(prefers-reduced-motion:no-preference){.card{animation:in .25s ease-out}@keyframes in{from{opacity:0;transform:translateY(6px)}}}
+.acc{color:var(--acc)}
+.between{justify-content:space-between}
+.filters{margin:10px 0 6px;display:grid;gap:10px}
+.filter{border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--soft)}
+.filter select,.filter input{background:var(--bg)}
+.picker{display:grid;gap:8px;margin-top:6px}
+.vals{max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:4px}
+.val{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:15px}
+.val:hover{background:var(--soft)}
+.val input{width:20px;height:20px;accent-color:var(--acc)}
+.val span{overflow-wrap:anywhere}

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import {
-  KEY_ID, buildColumns, buildWorkbook, downloadWorkbook, loadSheet, mergeSources, readFile, sampleSources,
+  KEY_ID, buildColumns, buildWorkbook, distinctValues, downloadWorkbook, filteredRows, loadSheet, mergeSources, readFile,
+  sampleSources,
 } from './merge.js';
 
 const QTY_RX = /كمي|عدد|qty|quantity|مسحوب/i;
@@ -10,7 +11,10 @@ const PREVIEW_LIMIT = 200;
 function initialState() {
   const sources = sampleSources();
   const order = [KEY_ID, 'اسم القطعة', 'الكمية المسحوبة', 'سعر القطعة'];
-  const columns = buildColumns(sources).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  const rank = (id) => (order.includes(id) ? order.indexOf(id) : order.length);
+  const columns = buildColumns(sources)
+    .map((c) => ({ ...c, on: order.includes(c.id) }))
+    .sort((a, b) => rank(a.id) - rank(b.id));
   return { sources, columns };
 }
 
@@ -64,7 +68,8 @@ export default function App() {
       list.map((s) => {
         if (s.id !== id) return s;
         const next = { ...s, ...patch };
-        return 'key' in patch && Object.keys(patch).length <= 2 ? next : loadSheet(next);
+        // Changing the sheet or header row re-reads the file (and clears its filters).
+        return 'sheet' in patch || 'hdr' in patch ? loadSheet(next) : next;
       }),
     );
   }
@@ -90,7 +95,7 @@ export default function App() {
         <h2>الملفات</h2>
         <DropZone onFiles={addFiles} />
         <div className="row" style={{ marginTop: 10 }}>
-          <button onClick={() => setSources(sampleSources())}>جرّب بمثال جاهز</button>
+          <button onClick={() => { setState(initialState()); setErrors([]); }}>جرّب بمثال جاهز</button>
           <button onClick={() => { setState({ sources: [], columns: [] }); setErrors([]); }}>مسح الكل</button>
         </div>
         <div className="files">
@@ -231,11 +236,16 @@ function DropZone({ onFiles }) {
 }
 
 function SourceCard({ src, isFirst, onChange, onRemove, onMakeFirst }) {
+  const kept = src.filters.length ? filteredRows(src).length : null;
   return (
     <div className="card">
       <div className="nm">
         <span>
-          <bdi>{src.name}</bdi> <small>{isFirst ? '(الملف الأول) · ' : ''}{src.data.length} صف</small>
+          <bdi>{src.name}</bdi>{' '}
+          <small>
+            {isFirst ? '(الملف الأول) · ' : ''}
+            {kept === null ? `${src.data.length} صف` : <b className="acc">{kept} من {src.data.length} صف بعد الفلتر</b>}
+          </small>
         </span>
         <button className="x" onClick={onRemove}>حذف</button>
       </div>
@@ -262,7 +272,96 @@ function SourceCard({ src, isFirst, onChange, onRemove, onMakeFirst }) {
           {src.headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
         </select>
       </label>
+      <Filters src={src} onChange={(filters) => onChange({ filters })} />
       {!isFirst && <button className="x" onClick={onMakeFirst}>اجعله الملف الأول</button>}
+    </div>
+  );
+}
+
+const OPS = [
+  ['in', 'القيمة واحدة من'],
+  ['notIn', 'استبعد القيم'],
+  ['contains', 'يحتوي على'],
+  ['notContains', 'لا يحتوي على'],
+  ['gte', 'أكبر من أو يساوي'],
+  ['lte', 'أصغر من أو يساوي'],
+];
+const LIST_OPS = new Set(['in', 'notIn']);
+
+function Filters({ src, onChange }) {
+  const set = (i, patch) => onChange(src.filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  const add = () => {
+    const col = src.headers.findIndex((_, i) => i !== src.key);
+    onChange([...src.filters, { col: col < 0 ? 0 : col, op: 'in', values: [], text: '' }]);
+  };
+  return (
+    <div className="filters">
+      {src.filters.map((f, i) => (
+        <div className="filter" key={i}>
+          <div className="row between">
+            <b className="small">فلتر {src.filters.length > 1 ? i + 1 : ''}</b>
+            <button className="x" onClick={() => onChange(src.filters.filter((_, j) => j !== i))}>إزالة الفلتر</button>
+          </div>
+          <label className="f">
+            العمود
+            <select value={f.col} onChange={(e) => set(i, { col: +e.target.value, values: [] })}>
+              {src.headers.map((h, j) => <option key={j} value={j}>{h}</option>)}
+            </select>
+          </label>
+          <label className="f">
+            الشرط
+            <select value={f.op} onChange={(e) => set(i, { op: e.target.value })}>
+              {OPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </label>
+          {LIST_OPS.has(f.op) ? (
+            <ValuePicker src={src} filter={f} onChange={(values) => set(i, { values })} />
+          ) : (
+            <label className="f">
+              القيمة
+              <input
+                type={f.op === 'gte' || f.op === 'lte' ? 'number' : 'text'}
+                value={f.text}
+                onChange={(e) => set(i, { text: e.target.value })}
+              />
+            </label>
+          )}
+        </div>
+      ))}
+      <button className="x" onClick={add}>+ إضافة فلتر</button>
+    </div>
+  );
+}
+
+const PICKER_LIMIT = 300;
+
+function ValuePicker({ src, filter, onChange }) {
+  const [q, setQ] = useState('');
+  const all = useMemo(() => distinctValues(src, filter.col), [src.data, filter.col]);
+  const shown = all.filter((d) => !q || d.value.toLowerCase().includes(q.trim().toLowerCase()));
+  const chosen = new Set(filter.values);
+  const toggle = (v) => onChange(chosen.has(v) ? filter.values.filter((x) => x !== v) : [...filter.values, v]);
+  return (
+    <div className="picker">
+      <div className="row">
+        <input type="text" placeholder="ابحث عن قيمة…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 140px' }} />
+        <button className="x" onClick={() => onChange([...new Set([...filter.values, ...shown.map((d) => d.value)])])}>تحديد الظاهر</button>
+        <button className="x" onClick={() => onChange([])}>إلغاء التحديد</button>
+      </div>
+      <div className="vals">
+        {shown.slice(0, PICKER_LIMIT).map((d) => (
+          <label key={d.value} className="val">
+            <input type="checkbox" checked={chosen.has(d.value)} onChange={() => toggle(d.value)} />
+            <span>{d.value === '' ? <i className="mut">(فارغ)</i> : <bdi>{d.value}</bdi>}</span>
+            <small className="mut">{d.count}</small>
+          </label>
+        ))}
+        {shown.length > PICKER_LIMIT && <div className="mut small">يظهر أول {PICKER_LIMIT} قيمة، استخدم البحث للباقي.</div>}
+        {!shown.length && <div className="mut small">لا توجد قيم مطابقة</div>}
+      </div>
+      <div className="mut small">
+        {filter.values.length ? `محدد ${filter.values.length} من ${all.length} قيمة` : 'لم تحدد أي قيمة بعد، فالفلتر غير مفعّل'}
+      </div>
     </div>
   );
 }

@@ -43,7 +43,64 @@ export function loadSheet(src) {
     s.key = k < 0 ? 0 : k;
   }
   if (s.key >= s.headers.length) s.key = 0;
+  s.filters = [];
   return s;
+}
+
+/** Text form of a cell used for filtering; empty cells become ''. */
+export const cellText = (v) => String(v ?? '').trim();
+
+/**
+ * Filter shapes:
+ *   { col, op: 'in',          values: ['a', 'b'] }  keep rows whose cell is one of the values
+ *   { col, op: 'notIn',       values: [...] }       drop rows whose cell is one of the values
+ *   { col, op: 'contains',    text: '...' }         keep rows whose cell contains the text
+ *   { col, op: 'notContains', text: '...' }
+ *   { col, op: 'gte' | 'lte', text: '10' }          numeric comparison
+ * Filters on one file are combined with AND. An incomplete filter (no values / no text) is ignored.
+ */
+export function rowPasses(row, f) {
+  const t = cellText(row[f.col]);
+  switch (f.op) {
+    case 'in':
+      return !f.values?.length || f.values.includes(t);
+    case 'notIn':
+      return !f.values?.length || !f.values.includes(t);
+    case 'contains':
+    case 'notContains': {
+      const q = cellText(f.text).toLowerCase();
+      if (!q) return true;
+      const hit = t.toLowerCase().includes(q);
+      return f.op === 'contains' ? hit : !hit;
+    }
+    case 'gte':
+    case 'lte': {
+      const lim = parseFloat(f.text);
+      if (!Number.isFinite(lim)) return true;
+      const n = parseFloat(t);
+      if (!Number.isFinite(n)) return false;
+      return f.op === 'gte' ? n >= lim : n <= lim;
+    }
+    default:
+      return true;
+  }
+}
+
+export function filteredRows(src) {
+  const fs = src.filters || [];
+  return fs.length ? src.data.filter((r) => fs.every((f) => rowPasses(r, f))) : src.data;
+}
+
+/** Distinct values of a column with counts, most frequent first. */
+export function distinctValues(src, col) {
+  const counts = new Map();
+  for (const r of src.data) {
+    const t = cellText(r[col]);
+    counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, 'ar', { numeric: true }));
 }
 
 /** Output columns: key first, then every distinct header; keeps the user's order/labels/toggles. */
@@ -86,7 +143,7 @@ export function mergeSources(sources, columns, opts = {}) {
 
   sources.forEach((s, fi) => {
     const seen = new Set();
-    for (const row of s.data) {
+    for (const row of filteredRows(s)) {
       const raw = row[s.key];
       const k = normKey(raw);
       if (!k) continue;
@@ -185,12 +242,12 @@ export function sampleSources() {
       ['P-1005', 'فحمات فرامل', 165],
     ]),
     mk('السحوبات.xlsx', [
-      ['اسم القطعة', 'رقم القطعة', 'الكمية المسحوبة'],
-      ['فلتر زيت', 'P-1001', 12],
-      ['بواجي', 'P-1003', 40],
-      ['سير مكينة', 'P-1004', 3],
-      ['فحمات فرامل', 'P-1005', 8],
-      ['مساحات', 'P-1009', 6],
+      ['اسم القطعة', 'رقم القطعة', 'الكمية المسحوبة', 'المستودع'],
+      ['فلتر زيت', 'P-1001', 12, 'الرئيسي'],
+      ['بواجي', 'P-1003', 40, 'الرئيسي'],
+      ['سير مكينة', 'P-1004', 3, 'الفرعي'],
+      ['فحمات فرامل', 'P-1005', 8, 'الرئيسي'],
+      ['مساحات', 'P-1009', 6, 'الفرعي'],
     ]),
   ];
 }
